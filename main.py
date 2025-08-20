@@ -13,7 +13,7 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 DATA_FILE = "courses.json"
 
-DEBUG = True
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
 def debug_print(*args, **kwargs):
     if DEBUG:
@@ -67,10 +67,17 @@ def extract_enrolled_students(text):
     return int(numbers[1]) if len(numbers) > 1 else None
 
 async def fetch_course_info(guild_id, course_code, page):
-    debug_print(f"🔍 [DEBUG] 正在查詢課程 {course_code} ...")
-    await page.goto("https://querycourse.ntust.edu.tw/querycourse/#/")
-    await page.wait_for_load_state("networkidle")
-    await page.fill("input[type='text']", course_code)
+    debug_print(f"[DEBUG] 開始持續追蹤課程 {course_code} ...")
+    try:
+        # Initial page load and search
+        await page.goto("https://querycourse.ntust.edu.tw/querycourse/#/")
+        await page.wait_for_load_state("networkidle")
+        await asyncio.sleep(2) # Wait for page scripts to settle
+        await page.fill("input[type='text']", course_code)
+    except playwright.async_api.TimeoutError as e:
+        debug_print(f"❌ [DEBUG] 追蹤任務初始化失敗 {course_code}: {e}")
+        # Optionally, notify user about failure to track
+        return # End this task
 
     while True:
         try:
@@ -85,26 +92,27 @@ async def fetch_course_info(guild_id, course_code, page):
                 rows.forEach(row => {
                     let cols = row.querySelectorAll("td");
                     if (cols.length > 10) {
-                        let course_code = cols[0].innerText.trim();
-                        let course_name = cols[2].innerText.trim();
-                        let teacher_name = cols[6].innerText.trim();
-                        let enrollment_text = cols[7].innerText.trim();
-                        let lesson_time = cols[8].innerText.trim();
-                        let classroom = cols[9].innerText.trim();
-                        let remark_text = cols.length > 10 ? cols[10].innerText.trim() : "";
-                        data.push({course_code, course_name, teacher_name, enrollment_text, lesson_time, classroom, remark_text});
+                        data.push({
+                            course_code: cols[0].innerText.trim(),
+                            course_name: cols[2].innerText.trim(),
+                            teacher_name: cols[6].innerText.trim(),
+                            enrollment_text: cols[7].innerText.trim(),
+                            lesson_time: cols[8].innerText.trim(),
+                            classroom: cols[9].innerText.trim(),
+                            remark_text: cols[10].innerText.trim()
+                        });
                     }
                 });
                 return data;
             }""")
 
             if not result:
-                debug_print(f"⚠️ [DEBUG] 未找到課程 {course_code}，繼續查詢...")
+                debug_print(f"⚠️ [DEBUG] 追蹤中，未找到課程 {course_code}，將重試...")
             else:
                 course = result[0]
                 enrolled_students = extract_enrolled_students(course["enrollment_text"])
                 max_students = extract_max_students(course["remark_text"])
-                debug_print(f"📌 [DEBUG] 取得課程資訊: {course}")
+                debug_print(f"📌 [DEBUG] 追蹤中，取得課程資訊: {course['course_name']} ({enrolled_students}/{max_students})")
 
                 async with lock:
                     if guild_id not in tracked_courses or course_code not in tracked_courses[guild_id]:
@@ -141,11 +149,15 @@ async def fetch_course_info(guild_id, course_code, page):
                         else:
                             tracked_courses[guild_id][course_code]["notified"] = False
 
+        except asyncio.CancelledError:
+            debug_print(f"[DEBUG] 任務 {course_code} 已被取消")
+            break
+        except playwright.async_api.TimeoutError:
+            debug_print(f"❌ [DEBUG] 查詢課程 {course_code} 時發生超時錯誤，將重試...")
         except Exception as e:
-            debug_print(f"❌ [DEBUG] 查詢課程 {course_code} 時發生錯誤：{e}")
-
-        # ✅ 無論是否成功查詢都等待再查一次
-        await asyncio.sleep(3)
+            debug_print(f"❌ [DEBUG] 查詢課程 {course_code} 時發生未預期錯誤：{type(e).__name__}: {e}")
+        
+        await asyncio.sleep(30)
 
 
 @bot.event
@@ -165,7 +177,7 @@ async def on_ready():
                 task = asyncio.create_task(fetch_course_info(guild_id, course_code, page))
                 tracked_courses[guild_id][course_code]["page"] = page
                 tracked_courses[guild_id][course_code]["task"] = task
-            await asyncio.sleep(5)
+            await asyncio.sleep(1)
 
     if not periodic_notify.is_running():
         periodic_notify.start()
@@ -190,30 +202,82 @@ async def periodic_notify():
 async def add(interaction: discord.Interaction, course_code: str):
     guild_id = interaction.guild.id
     user_id = interaction.user.id
+    
+    await interaction.response.defer()
+
     async with lock:
         if guild_id not in tracked_courses:
             tracked_courses[guild_id] = {}
 
         if course_code in tracked_courses[guild_id]:
             tracked_courses[guild_id][course_code]["followers"].add(user_id)
-        else:
-            page = await playwright_context.new_page()
-            task = asyncio.create_task(fetch_course_info(guild_id, course_code, page))
-            tracked_courses[guild_id][course_code] = {
-                "name": "未知課程",
-                "teacher": "未知",
-                "lesson_time": "未知",
-                "classroom": "未知",
-                "remark": "未知",
-                "page": page,
-                "task": task,
-                "notified": False,
-                "followers": {user_id},
-                "enrolled_students": None,
-                "max_students": None
-            }
+            save_data()
+            await interaction.followup.send(f"✅ 已將您加入 `{course_code}` 的追蹤列表。", ephemeral=True)
+            return
+
+    # Validate the course code with a temporary page
+    validation_page = await playwright_context.new_page()
+    details = None
+    try:
+        debug_print(f"🔍 [DEBUG] 正在驗證課程 {course_code} ...")
+        await validation_page.goto("https://querycourse.ntust.edu.tw/querycourse/#/")
+        await validation_page.wait_for_load_state("networkidle", timeout=30000) # Longer timeout for initial load
+        await asyncio.sleep(3) # Wait for page scripts to settle
+        await validation_page.fill("input[type='text']", course_code)
+        await validation_page.press("input[type='text']", "Enter")
+        await validation_page.wait_for_selector(".v-datatable", timeout=30000)
+        await asyncio.sleep(3) # Wait for page scripts to settle
+        details = await validation_page.evaluate("""() => {
+            let table = document.querySelector(".v-datatable");
+            if (!table) return null;
+            let row = table.querySelector("tbody tr");
+            if (!row) return null;
+            let cols = row.querySelectorAll("td");
+            if (cols.length <= 10) return null;
+            return {
+                course_code: cols[0].innerText.trim(),
+                course_name: cols[2].innerText.trim(),
+                teacher_name: cols[6].innerText.trim(),
+                enrollment_text: cols[7].innerText.trim(),
+                lesson_time: cols[8].innerText.trim(),
+                classroom: cols[9].innerText.trim(),
+                remark_text: cols[10].innerText.trim()
+            };
+        }""")
+    except Exception as e:
+        debug_print(f"❌ [DEBUG] 驗證課程 {course_code} 時發生錯誤: {e}")
+    finally:
+        await validation_page.close()
+
+    if details is None:
+        await interaction.followup.send(f"⚠️ **找不到課程 `{course_code}`！**\n請檢查課程代碼是否正確，或稍後再試。", ephemeral=True)
+        return
+
+    # Course found, add it to tracking
+    enrolled = extract_enrolled_students(details["enrollment_text"])
+    maximum = extract_max_students(details["remark_text"])
+    
+    async with lock:
+        page = await playwright_context.new_page()
+        task = asyncio.create_task(fetch_course_info(guild_id, course_code, page))
+        tracked_courses[guild_id][course_code] = {
+            "name": details["course_name"],
+            "teacher": details["teacher_name"],
+            "lesson_time": details["lesson_time"],
+            "classroom": details["classroom"],
+            "remark": details["remark_text"],
+            "page": page,
+            "task": task,
+            "notified": False,
+            "followers": {user_id},
+            "enrolled_students": enrolled,
+            "max_students": maximum
+        }
         save_data()
-    await interaction.response.send_message(f"✅ 已開始追蹤課程 `{course_code}`")
+
+    await interaction.followup.send(f"✅ 已成功找到並開始追蹤課程：\n**`{details['course_code']} - {details['course_name']}`**", ephemeral=True)
+
+
 
 @bot.tree.command(name="del", description="取消追蹤課程")
 async def delete_course(interaction: discord.Interaction, course_code: str):
@@ -237,6 +301,21 @@ async def set_channel(interaction: discord.Interaction):
     guild_channels[guild_id] = interaction.channel.id
     save_data()
     await interaction.response.send_message(f"✅ 此頻道已設定為通知頻道！")
+
+@bot.tree.command(name="help", description="顯示所有指令的說明")
+async def help_command(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🤖 機器人指令說明",
+        description="以下是所有可用的斜線指令：",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="`/add <course_code>`", value="開始追蹤一個新的課程。", inline=False)
+    embed.add_field(name="`/del <course_code>`", value="取消追蹤一個指定的課程。", inline=False)
+    embed.add_field(name="`/list`", value="列出此伺服器上所有正在追蹤的課程。", inline=False)
+    embed.add_field(name="`/set_channel`", value="將目前的頻道設為接收通知的頻道。", inline=False)
+    embed.add_field(name="`/help`", value="顯示這則說明訊息。", inline=False)
+    embed.set_footer(text="NTUST Course Scraper Bot")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="list", description="列出此伺服器追蹤中的課程")
 async def list_courses(interaction: discord.Interaction):
