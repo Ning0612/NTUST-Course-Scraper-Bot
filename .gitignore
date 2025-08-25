@@ -6,3 +6,4 @@
 __pycache__/
 *.pyc
 courses.json
+.DS_Store

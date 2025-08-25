@@ -17,7 +17,8 @@ DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
 def debug_print(*args, **kwargs):
     if DEBUG:
-        print(datetime.datetime.now(), *args, **kwargs)
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{timestamp}] [DEBUG]", *args, **kwargs)
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -67,15 +68,18 @@ def extract_enrolled_students(text):
     return int(numbers[1]) if len(numbers) > 1 else None
 
 async def fetch_course_info(guild_id, course_code, page):
-    debug_print(f"[DEBUG] 開始持續追蹤課程 {course_code} ...")
+    debug_print(f"🔄 開始持續追蹤課程 {course_code}")
     try:
         # Initial page load and search
         await page.goto("https://querycourse.ntust.edu.tw/querycourse/#/")
-        await page.wait_for_load_state("networkidle")
-        await asyncio.sleep(2) # Wait for page scripts to settle
+        await page.wait_for_load_state("networkidle", timeout=30000) # Longer timeout for initial load
+        await asyncio.sleep(3) # Wait for page scripts to settle
         await page.fill("input[type='text']", course_code)
-    except playwright.async_api.TimeoutError as e:
-        debug_print(f"❌ [DEBUG] 追蹤任務初始化失敗 {course_code}: {e}")
+        await page.press("input[type='text']", "Enter")
+        await page.wait_for_selector(".v-datatable", timeout=30000)
+        await asyncio.sleep(3) # Wait for page scripts to settle
+    except Exception as e:
+        debug_print(f"❌ 追蹤任務初始化失敗 {course_code}: {e}")
         # Optionally, notify user about failure to track
         return # End this task
 
@@ -107,16 +111,16 @@ async def fetch_course_info(guild_id, course_code, page):
             }""")
 
             if not result:
-                debug_print(f"⚠️ [DEBUG] 追蹤中，未找到課程 {course_code}，將重試...")
+                debug_print(f"⚠️ 追蹤中，未找到課程 {course_code}，將重試")
             else:
                 course = result[0]
                 enrolled_students = extract_enrolled_students(course["enrollment_text"])
                 max_students = extract_max_students(course["remark_text"])
-                debug_print(f"📌 [DEBUG] 追蹤中，取得課程資訊: {course['course_name']} ({enrolled_students}/{max_students})")
+                debug_print(f"📌 追蹤中，取得課程資訊: {course['course_name']} ({enrolled_students}/{max_students})")
 
                 async with lock:
                     if guild_id not in tracked_courses or course_code not in tracked_courses[guild_id]:
-                        debug_print(f"📌 [DEBUG] 課程 {course_code} 已不再追蹤，終止查詢任務")
+                        debug_print(f"📌 課程 {course_code} 已不再追蹤，終止查詢任務")
                         break
 
                     tracked_courses[guild_id][course_code].update({
@@ -132,7 +136,7 @@ async def fetch_course_info(guild_id, course_code, page):
                     if enrolled_students is not None and max_students is not None:
                         if enrolled_students < max_students:
                             if not tracked_courses[guild_id][course_code]["notified"]:
-                                debug_print(f"✅ [DEBUG] {course_code} 有名額，發送通知！")
+                                debug_print(f"✅ {course_code} 有名額，發送通知")
                                 tracked_courses[guild_id][course_code]["notified"] = True
                                 channel = bot.get_channel(guild_channels.get(guild_id))
                                 if channel:
@@ -145,24 +149,23 @@ async def fetch_course_info(guild_id, course_code, page):
                                         f"📌 **目前人數:** {enrolled_students}/{max_students}\n"
                                         f"🔗 [前往選課](https://courseselection.ntust.edu.tw/AddAndSub/B01/B01)"
                                     )
+                                    debug_print(f"📤 發送課程名額通知到頻道 #{channel.name} ({channel.id}): {course['course_code']} {course['course_name']} ({enrolled_students}/{max_students})")
                                     await channel.send(message)
                         else:
                             tracked_courses[guild_id][course_code]["notified"] = False
 
         except asyncio.CancelledError:
-            debug_print(f"[DEBUG] 任務 {course_code} 已被取消")
+            debug_print(f"⏹️ 任務 {course_code} 已被取消")
             break
-        except playwright.async_api.TimeoutError:
-            debug_print(f"❌ [DEBUG] 查詢課程 {course_code} 時發生超時錯誤，將重試...")
         except Exception as e:
-            debug_print(f"❌ [DEBUG] 查詢課程 {course_code} 時發生未預期錯誤：{type(e).__name__}: {e}")
+            debug_print(f"❌ 查詢課程 {course_code} 時發生錯誤：{type(e).__name__}: {e}")
         
         await asyncio.sleep(30)
 
 
 @bot.event
 async def on_ready():
-    debug_print(f"✅ [DEBUG] Bot 已啟動：{bot.user}")
+    debug_print(f"✅ Bot 已啟動：{bot.user}")
     global playwright_browser, playwright_context
     playwright = await async_playwright().start()
     playwright_browser = await playwright.chromium.launch(headless=True)
@@ -172,7 +175,7 @@ async def on_ready():
     async with lock:
         for guild_id, courses in tracked_courses.items():
             for course_code, data in courses.items():
-                debug_print(f"🔄 [DEBUG] 初始化追蹤課程：{course_code} ({guild_id})")
+                debug_print(f"🔄 初始化追蹤課程：{course_code} (伺服器ID: {guild_id})")
                 page = await playwright_context.new_page()
                 task = asyncio.create_task(fetch_course_info(guild_id, course_code, page))
                 tracked_courses[guild_id][course_code]["page"] = page
@@ -196,6 +199,7 @@ async def periodic_notify():
                             f"{followers} 📢 **`{course_code} {data['name']}`** 仍有名額！\n"
                             f"🔗 [前往選課](https://courseselection.ntust.edu.tw/AddAndSub/B01/B01)"
                         )
+                        debug_print(f"📤 發送定期提醒通知到頻道 #{channel.name} ({channel.id}): {course_code} {data['name']}")
                         await channel.send(message)
 
 @bot.tree.command(name="add", description="追蹤指定課程")
@@ -203,6 +207,7 @@ async def add(interaction: discord.Interaction, course_code: str):
     guild_id = interaction.guild.id
     user_id = interaction.user.id
     
+    debug_print(f"📩 收到追蹤課程請求: {interaction.user.name} ({user_id}) @ {interaction.guild.name} ({guild_id}) - {course_code}")
     await interaction.response.defer()
 
     async with lock:
@@ -219,7 +224,7 @@ async def add(interaction: discord.Interaction, course_code: str):
     validation_page = await playwright_context.new_page()
     details = None
     try:
-        debug_print(f"🔍 [DEBUG] 正在驗證課程 {course_code} ...")
+        debug_print(f"🔍 正在驗證課程 {course_code}")
         await validation_page.goto("https://querycourse.ntust.edu.tw/querycourse/#/")
         await validation_page.wait_for_load_state("networkidle", timeout=30000) # Longer timeout for initial load
         await asyncio.sleep(3) # Wait for page scripts to settle
@@ -245,11 +250,12 @@ async def add(interaction: discord.Interaction, course_code: str):
             };
         }""")
     except Exception as e:
-        debug_print(f"❌ [DEBUG] 驗證課程 {course_code} 時發生錯誤: {e}")
+        debug_print(f"❌ 驗證課程 {course_code} 時發生錯誤: {e}")
     finally:
         await validation_page.close()
 
     if details is None:
+        debug_print(f"📤 通知使用者 {interaction.user.name} ({user_id}) 找不到課程 {course_code}")
         await interaction.followup.send(f"⚠️ **找不到課程 `{course_code}`！**\n請檢查課程代碼是否正確，或稍後再試。", ephemeral=True)
         return
 
@@ -275,7 +281,8 @@ async def add(interaction: discord.Interaction, course_code: str):
         }
         save_data()
 
-    await interaction.followup.send(f"✅ 已成功找到並開始追蹤課程：\n**`{details['course_code']} - {details['course_name']}`**", ephemeral=True)
+    debug_print(f"📤 通知使用者 {interaction.user.name} ({user_id}) 已成功開始追蹤課程 {details['course_code']} - {details['course_name']}")
+    await interaction.followup.send(f"✅ 已成功找到並開始追蹤課程：\n**`{details['course_code']} - {details['course_name']}`**")
 
 
 
@@ -283,6 +290,8 @@ async def add(interaction: discord.Interaction, course_code: str):
 async def delete_course(interaction: discord.Interaction, course_code: str):
     guild_id = interaction.guild.id
     user_id = interaction.user.id
+    
+    debug_print(f"📩 收到取消追蹤請求: {interaction.user.name} ({user_id}) @ {interaction.guild.name} ({guild_id}) - {course_code}")
     async with lock:
         if guild_id in tracked_courses and course_code in tracked_courses[guild_id]:
             tracked_courses[guild_id][course_code]["followers"].discard(user_id)
@@ -291,19 +300,25 @@ async def delete_course(interaction: discord.Interaction, course_code: str):
                 tracked_courses[guild_id][course_code]["task"].cancel()
                 del tracked_courses[guild_id][course_code]
             save_data()
+            debug_print(f"📤 通知使用者 {interaction.user.name} ({user_id}) 已取消追蹤課程 {course_code}")
             await interaction.response.send_message(f"✅ 你已取消追蹤 `{course_code}`")
         else:
+            debug_print(f"📤 通知使用者 {interaction.user.name} ({user_id}) 嘗試取消未追蹤的課程 {course_code}")
             await interaction.response.send_message(f"⚠️ 你未追蹤 `{course_code}`！")
 
 @bot.tree.command(name="set_channel", description="設定通知頻道")
 async def set_channel(interaction: discord.Interaction):
     guild_id = interaction.guild.id
+    
+    debug_print(f"📩 收到設定通知頻道請求: {interaction.user.name} ({interaction.user.id}) @ {interaction.guild.name} ({guild_id}) - #{interaction.channel.name} ({interaction.channel.id})")
     guild_channels[guild_id] = interaction.channel.id
     save_data()
+    debug_print(f"📤 通知使用者 {interaction.user.name} ({interaction.user.id}) 已設定通知頻道為 #{interaction.channel.name} ({interaction.channel.id})")
     await interaction.response.send_message(f"✅ 此頻道已設定為通知頻道！")
 
 @bot.tree.command(name="help", description="顯示所有指令的說明")
 async def help_command(interaction: discord.Interaction):
+    debug_print(f"📩 收到說明指令請求: {interaction.user.name} ({interaction.user.id}) @ {interaction.guild.name} ({interaction.guild.id})")
     embed = discord.Embed(
         title="🤖 機器人指令說明",
         description="以下是所有可用的斜線指令：",
@@ -315,14 +330,18 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="`/set_channel`", value="將目前的頻道設為接收通知的頻道。", inline=False)
     embed.add_field(name="`/help`", value="顯示這則說明訊息。", inline=False)
     embed.set_footer(text="NTUST Course Scraper Bot")
+    debug_print(f"📤 向使用者 {interaction.user.name} ({interaction.user.id}) 發送說明訊息")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="list", description="列出此伺服器追蹤中的課程")
 async def list_courses(interaction: discord.Interaction):
     guild_id = interaction.guild_id
+    
+    debug_print(f"📩 收到課程列表請求: {interaction.user.name} ({interaction.user.id}) @ {interaction.guild.name} ({guild_id})")
     async with lock:
         courses_copy = tracked_courses.get(guild_id, {}).copy()
     if not courses_copy:
+        debug_print(f"📤 通知使用者 {interaction.user.name} ({interaction.user.id}) 該伺服器無追蹤中的課程")
         await interaction.response.send_message("⚠️ 目前此伺服器無追蹤中的課程！")
         return
 
@@ -350,6 +369,7 @@ async def list_courses(interaction: discord.Interaction):
     if current_chunk:
         message_chunks.append(current_chunk)
 
+    debug_print(f"📤 向使用者 {interaction.user.name} ({interaction.user.id}) 發送課程列表 ({len(message_chunks)} 個訊息)")
     for i, msg in enumerate(message_chunks):
         if i == 0:
             await interaction.response.send_message(msg)
