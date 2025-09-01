@@ -277,7 +277,7 @@ async def fetch_course_info(guild_id, course_code, page):
         except Exception as e:
             debug_print(f"❌ 查詢課程 {course_code} 時發生錯誤：{type(e).__name__}: {e}")
         
-        await asyncio.sleep(30)
+        await asyncio.sleep(10)
 
 
 @bot.event
@@ -285,7 +285,7 @@ async def on_ready():
     debug_print(f"✅ Bot 已啟動：{bot.user}")
     global playwright_browser, playwright_context
     playwright = await async_playwright().start()
-    playwright_browser = await playwright.chromium.launch(headless=False)
+    playwright_browser = await playwright.chromium.launch(headless=True)
     playwright_context = await playwright_browser.new_context()
     await bot.tree.sync()
 
@@ -432,8 +432,8 @@ async def add(interaction: discord.Interaction, course_code: str):
             await interaction.followup.send(f"⚠️ 創建追蹤任務時發生錯誤，請稍後重試。", ephemeral=True)
             return
 
-    debug_print(f"📤 通知使用者 {interaction.user.name} ({user_id}) 已成功開始追蹤課程 {details['course_code']} - {details['course_name']}")
-    await interaction.followup.send(f"✅ 已成功找到並開始追蹤課程：\n**`{details['course_code']} - {details['course_name']}`**")
+    debug_print(f"📤 通知使用者 {interaction.user.name} ({user_id}) 已成功開始追蹤課程 {details['course_code']} - {details['course_name']} ({enrolled}/{maximum})")
+    await interaction.followup.send(f"✅ 已成功找到並開始追蹤課程：\n**`{details['course_code']} - {details['course_name']} ({enrolled}/{maximum})`**")
 
 
 
@@ -480,6 +480,7 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="`/list`", value="列出此伺服器上所有正在追蹤的課程。", inline=False)
     embed.add_field(name="`/set_channel`", value="將目前的頻道設為接收通知的頻道。", inline=False)
     embed.add_field(name="`/help`", value="顯示這則說明訊息。", inline=False)
+    embed.add_field(name="GitHub 原始碼", value="[NTUST Course Scraper Bot](https://github.com/Ning0612/NTUST-Course-Scraper-Bot)", inline=False)
     embed.set_footer(text="NTUST Course Scraper Bot")
     debug_print(f"📤 向使用者 {interaction.user.name} ({interaction.user.id}) 發送說明訊息")
     await interaction.response.send_message(embed=embed, ephemeral=True)
