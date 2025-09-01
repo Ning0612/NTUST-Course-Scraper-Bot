@@ -63,6 +63,124 @@ def extract_max_students(text):
     match = re.search(r'限(\d+)人', text)
     return int(match.group(1)) if match else None
 
+def extract_max_students_from_remark(text):
+    """從備註文字提取人數上限（備用方法）"""
+    if not text:
+        return None
+    
+    patterns = [
+        r'限制(\d+)人',
+        r'限(\d+)人',
+        r'上限(\d+)人',
+        r'最多(\d+)人',
+        r'(\d{2,3})人',  # 兩到三位數字後跟"人"
+        r'／限(\d+)人',  # 特殊格式 "／限40人"
+    ]
+    
+    for pattern in patterns:
+        matches = re.findall(pattern, text)
+        for match in matches:
+            number = int(match)
+            if 5 <= number <= 200:  # 合理性檢查
+                return number
+    return None
+
+async def get_max_students_improved(page):
+    """
+    改進的 max_students 提取函數
+    優先使用點擊 more_horiz 按鈕獲取詳細資訊
+    如果失敗則回退到備註欄提取
+    """
+    
+    # 方法1：點擊 more_horiz 按鈕獲取詳細資訊
+    try:
+        debug_print("嘗試點擊 more_horiz 按鈕獲取詳細資訊...")
+        
+        # 點擊 more_horiz 按鈕
+        clicked = await page.evaluate("""() => {
+            let icons = document.querySelectorAll('i.material-icons');
+            for (let icon of icons) {
+                if (icon.textContent && icon.textContent.trim() === 'more_horiz') {
+                    icon.click();
+                    return true;
+                }
+            }
+            return false;
+        }""")
+        
+        if clicked:
+            # 等待詳細資訊載入
+            await asyncio.sleep(5)
+            
+            # 提取詳細資訊中的人數上限
+            max_students = await page.evaluate("""() => {
+                let allElements = document.querySelectorAll('*');
+                
+                for (let element of allElements) {
+                    if (element.innerText) {
+                        let text = element.innerText;
+                        
+                        // 優先尋找"加退選人數上限"
+                        let match = text.match(/本校加退選人數上限[^：]*：\\s*(\\d+)/);
+                        if (match) {
+                            return parseInt(match[1]);
+                        }
+                        
+                        // 其他可能的模式
+                        let patterns = [
+                            /加退選人數上限[^：]*：\\s*(\\d+)/,
+                            /選課人數上限[^：]*：\\s*(\\d+)/,
+                            /人數上限[^：]*：\\s*(\\d+)/,
+                            /上限[^：]*：\\s*(\\d+)/
+                        ];
+                        
+                        for (let pattern of patterns) {
+                            let m = text.match(pattern);
+                            if (m) {
+                                let num = parseInt(m[1]);
+                                if (num >= 5 && num <= 200) {
+                                    return num;
+                                }
+                            }
+                        }
+                    }
+                }
+                return null;
+            }""")
+            
+            if max_students:
+                debug_print(f"✅ 從詳細資訊提取 max_students: {max_students}")
+                return max_students
+    
+    except Exception as e:
+        debug_print(f"點擊方法失敗: {e}")
+    
+    # 方法2：回退到備註欄提取
+    try:
+        debug_print("回退到備註欄提取方法...")
+        
+        remark_text = await page.evaluate("""() => {
+            let table = document.querySelector(".v-datatable");
+            if (!table) return null;
+            let row = table.querySelector("tbody tr");
+            if (!row) return null;
+            let cols = row.querySelectorAll("td");
+            if (cols.length <= 10) return null;
+            return cols[10].innerText.trim();
+        }""")
+        
+        if remark_text:
+            max_from_remark = extract_max_students_from_remark(remark_text)
+            if max_from_remark:
+                debug_print(f"✅ 從備註欄提取 max_students: {max_from_remark}")
+                return max_from_remark
+    
+    except Exception as e:
+        debug_print(f"備註欄提取失敗: {e}")
+    
+    debug_print("❌ 無法提取 max_students")
+    return None
+
 def extract_enrolled_students(text):
     numbers = re.findall(r'\d+', text)
     return int(numbers[1]) if len(numbers) > 1 else None
@@ -115,7 +233,7 @@ async def fetch_course_info(guild_id, course_code, page):
             else:
                 course = result[0]
                 enrolled_students = extract_enrolled_students(course["enrollment_text"])
-                max_students = extract_max_students(course["remark_text"])
+                max_students = tracked_courses[guild_id][course_code]["max_students"]
                 debug_print(f"📌 追蹤中，取得課程資訊: {course['course_name']} ({enrolled_students}/{max_students})")
 
                 async with lock:
@@ -130,7 +248,6 @@ async def fetch_course_info(guild_id, course_code, page):
                         "classroom": course["classroom"],
                         "remark": course["remark_text"],
                         "enrolled_students": enrolled_students,
-                        "max_students": max_students
                     })
 
                     if enrolled_students is not None and max_students is not None:
@@ -168,19 +285,28 @@ async def on_ready():
     debug_print(f"✅ Bot 已啟動：{bot.user}")
     global playwright_browser, playwright_context
     playwright = await async_playwright().start()
-    playwright_browser = await playwright.chromium.launch(headless=True)
+    playwright_browser = await playwright.chromium.launch(headless=False)
     playwright_context = await playwright_browser.new_context()
     await bot.tree.sync()
 
     async with lock:
         for guild_id, courses in tracked_courses.items():
             for course_code, data in courses.items():
-                debug_print(f"🔄 初始化追蹤課程：{course_code} (伺服器ID: {guild_id})")
-                page = await playwright_context.new_page()
-                task = asyncio.create_task(fetch_course_info(guild_id, course_code, page))
-                tracked_courses[guild_id][course_code]["page"] = page
-                tracked_courses[guild_id][course_code]["task"] = task
-            await asyncio.sleep(1)
+                try:
+                    debug_print(f"🔄 初始化追蹤課程：{course_code} (伺服器ID: {guild_id})")
+                    page = await playwright_context.new_page()
+                    # 給每個頁面一個延遲，避免同時創建太多頁面
+                    await asyncio.sleep(2)
+                    task = asyncio.create_task(fetch_course_info(guild_id, course_code, page))
+                    tracked_courses[guild_id][course_code]["page"] = page
+                    tracked_courses[guild_id][course_code]["task"] = task
+                    debug_print(f"✅ 成功創建追蹤任務：{course_code}")
+                except Exception as e:
+                    debug_print(f"❌ 初始化追蹤課程失敗 {course_code}: {e}")
+                    # 如果初始化失敗，從追蹤列表中移除
+                    if course_code in tracked_courses[guild_id]:
+                        del tracked_courses[guild_id][course_code]
+                await asyncio.sleep(1)
 
     if not periodic_notify.is_running():
         periodic_notify.start()
@@ -259,27 +385,52 @@ async def add(interaction: discord.Interaction, course_code: str):
         await interaction.followup.send(f"⚠️ **找不到課程 `{course_code}`！**\n請檢查課程代碼是否正確，或稍後再試。", ephemeral=True)
         return
 
-    # Course found, add it to tracking
+    # Course found, add it to tracking - 使用改進的上限提取方法
     enrolled = extract_enrolled_students(details["enrollment_text"])
-    maximum = extract_max_students(details["remark_text"])
+    
+    # 重新打開頁面來提取準確的上限資訊
+    max_page = await playwright_context.new_page()
+    try:
+        await max_page.goto("https://querycourse.ntust.edu.tw/querycourse/#/")
+        await max_page.wait_for_load_state("networkidle", timeout=30000)
+        await asyncio.sleep(3)
+        await max_page.fill("input[type='text']", course_code)
+        await max_page.press("input[type='text']", "Enter")
+        await max_page.wait_for_selector(".v-datatable", timeout=30000)
+        await asyncio.sleep(3)
+        
+        maximum = await get_max_students_improved(max_page)
+        debug_print(f"🎯 初始化課程 {course_code} 獲取到上限: {maximum}")
+    except Exception as e:
+        debug_print(f"❌ 獲取課程上限失敗，使用備用方法: {e}")
+        maximum = extract_max_students(details["remark_text"])
+    finally:
+        await max_page.close()
     
     async with lock:
-        page = await playwright_context.new_page()
-        task = asyncio.create_task(fetch_course_info(guild_id, course_code, page))
-        tracked_courses[guild_id][course_code] = {
-            "name": details["course_name"],
-            "teacher": details["teacher_name"],
-            "lesson_time": details["lesson_time"],
-            "classroom": details["classroom"],
-            "remark": details["remark_text"],
-            "page": page,
-            "task": task,
-            "notified": False,
-            "followers": {user_id},
-            "enrolled_students": enrolled,
-            "max_students": maximum
-        }
-        save_data()
+        try:
+            page = await playwright_context.new_page()
+            await asyncio.sleep(1)  # 小延遲避免資源衝突
+            task = asyncio.create_task(fetch_course_info(guild_id, course_code, page))
+            tracked_courses[guild_id][course_code] = {
+                "name": details["course_name"],
+                "teacher": details["teacher_name"],
+                "lesson_time": details["lesson_time"],
+                "classroom": details["classroom"],
+                "remark": details["remark_text"],
+                "page": page,
+                "task": task,
+                "notified": False,
+                "followers": {user_id},
+                "enrolled_students": enrolled,
+                "max_students": maximum
+            }
+            save_data()
+            debug_print(f"✅ 成功創建新的追蹤任務：{course_code}")
+        except Exception as e:
+            debug_print(f"❌ 創建追蹤任務失敗 {course_code}: {e}")
+            await interaction.followup.send(f"⚠️ 創建追蹤任務時發生錯誤，請稍後重試。", ephemeral=True)
+            return
 
     debug_print(f"📤 通知使用者 {interaction.user.name} ({user_id}) 已成功開始追蹤課程 {details['course_code']} - {details['course_name']}")
     await interaction.followup.send(f"✅ 已成功找到並開始追蹤課程：\n**`{details['course_code']} - {details['course_name']}`**")
