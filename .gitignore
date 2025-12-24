@@ -8,4 +8,9 @@ __pycache__/
 courses.json
 .DS_Store
 
+# Backup files
+*.bak
+
+# Claude Code
 .claude
+CLAUDE.md

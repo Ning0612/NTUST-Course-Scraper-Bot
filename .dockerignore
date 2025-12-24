@@ -4,3 +4,10 @@ __pycache__
 .git
 .gitignore
 courses.json
+*.bak
+.claude
+*.md
+!README.md
+.pytest_cache
+.mypy_cache
+*.log
