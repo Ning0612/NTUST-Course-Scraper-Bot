@@ -11,7 +11,7 @@ from playwright.async_api import async_playwright
 # 讀取 Token
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
-DATA_FILE = "courses.json"
+DATA_FILE = os.getenv("DATA_FILE_PATH", "courses.json")
 
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
