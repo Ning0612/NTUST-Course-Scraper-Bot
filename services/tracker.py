@@ -219,20 +219,38 @@ class CourseTracker:
         """
         發送名額通知
 
+        優先使用已設定的通知頻道，若未設定則嘗試使用系統頻道。
+
         Args:
             guild_id: Discord 伺服器 ID
             course: TrackedCourse 實例
             course_info: 課程資訊字典
         """
         channel_id = self.guild_channels.get(guild_id)
-        if not channel_id:
-            self.debug_print(f"⚠️ 伺服器 {guild_id} 未設定通知頻道")
-            return
+        channel = None
+        use_system_channel = False
 
-        channel = self.bot.get_channel(channel_id)
+        # 優先使用已設定的通知頻道
+        if channel_id:
+            channel = self.bot.get_channel(channel_id)
+            if not channel:
+                self.debug_print(f"⚠️ 找不到通知頻道 {channel_id}，嘗試使用系統頻道")
+
+        # 未設定通知頻道或頻道不存在，嘗試使用系統頻道
         if not channel:
-            self.debug_print(f"⚠️ 找不到通知頻道 {channel_id}")
-            return
+            guild = self.bot.get_guild(guild_id)
+            if guild and guild.system_channel:
+                channel = guild.system_channel
+                use_system_channel = True
+                self.debug_print(
+                    f"⚠️ 伺服器 {guild_id} 未設定通知頻道，"
+                    f"使用系統頻道 #{guild.system_channel.name} ({guild.system_channel.id})"
+                )
+            else:
+                self.debug_print(
+                    f"❌ 伺服器 {guild_id} 未設定通知頻道且無系統頻道，無法發送通知"
+                )
+                return
 
         # 生成追蹤者提及字串
         followers = " ".join(f"<@{user_id}>" for user_id in course.followers)
@@ -247,8 +265,19 @@ class CourseTracker:
             f"🔗 [前往選課](https://courseselection.ntust.edu.tw/AddAndSub/B01/B01)"
         )
 
+        # 如果使用系統頻道，附加設定提示
+        if use_system_channel:
+            message += (
+                f"\n\n💡 **提示：** 此訊息發送至系統頻道，"
+                f"請管理員在適當的頻道中執行 `/set_channel` 設定專屬的課程通知頻道。"
+            )
+
         try:
             await channel.send(message)
+            self.debug_print(
+                f"✅ 成功發送通知到 "
+                f"{'系統頻道' if use_system_channel else '通知頻道'} #{channel.name}"
+            )
         except Exception as e:
             self.debug_print(f"❌ 發送通知失敗: {e}")
 

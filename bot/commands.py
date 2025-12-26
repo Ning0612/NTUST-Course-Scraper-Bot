@@ -39,6 +39,16 @@ def setup_commands(bot, tracker, data_manager):
             f"@ {interaction.guild.name} ({guild_id}) - {course_code}"
         )
 
+        # 檢查是否已設定通知頻道
+        if guild_id not in tracker.guild_channels or tracker.guild_channels[guild_id] is None:
+            debug_print(f"⚠️ 伺服器 {guild_id} 尚未設定通知頻道")
+            await interaction.response.send_message(
+                "⚠️ **尚未設定通知頻道！**\n"
+                "請先使用 `/set_channel` 指令在要接收通知的頻道中設定通知頻道。",
+                ephemeral=True
+            )
+            return
+
         await interaction.response.defer()
 
         # 檢查是否已追蹤該課程
@@ -118,6 +128,16 @@ def setup_commands(bot, tracker, data_manager):
             f"@ {interaction.guild.name} ({guild_id}) - {course_code}"
         )
 
+        # 檢查是否已設定通知頻道
+        if guild_id not in tracker.guild_channels or tracker.guild_channels[guild_id] is None:
+            debug_print(f"⚠️ 伺服器 {guild_id} 尚未設定通知頻道")
+            await interaction.response.send_message(
+                "⚠️ **尚未設定通知頻道！**\n"
+                "請先使用 `/set_channel` 指令在要接收通知的頻道中設定通知頻道。",
+                ephemeral=True
+            )
+            return
+
         course = tracker.get_course(guild_id, course_code)
         if not course:
             debug_print(f"⚠️ 使用者嘗試取消未追蹤的課程 {course_code}")
@@ -151,6 +171,16 @@ def setup_commands(bot, tracker, data_manager):
             f"📩 收到課程列表請求: {interaction.user.name} ({interaction.user.id}) "
             f"@ {interaction.guild.name} ({guild_id})"
         )
+
+        # 檢查是否已設定通知頻道
+        if guild_id not in tracker.guild_channels or tracker.guild_channels[guild_id] is None:
+            debug_print(f"⚠️ 伺服器 {guild_id} 尚未設定通知頻道")
+            await interaction.response.send_message(
+                "⚠️ **尚未設定通知頻道！**\n"
+                "請先使用 `/set_channel` 指令在要接收通知的頻道中設定通知頻道。",
+                ephemeral=True
+            )
+            return
 
         courses = tracker.get_tracked_courses(guild_id)
         if not courses:
@@ -233,10 +263,22 @@ def setup_commands(bot, tracker, data_manager):
         Args:
             interaction: Discord 互動
         """
+        guild_id = interaction.guild.id
+
         debug_print(
             f"📩 收到說明指令請求: {interaction.user.name} ({interaction.user.id}) "
-            f"@ {interaction.guild.name} ({interaction.guild.id})"
+            f"@ {interaction.guild.name} ({guild_id})"
         )
+
+        # 檢查是否已設定通知頻道
+        if guild_id not in tracker.guild_channels or tracker.guild_channels[guild_id] is None:
+            debug_print(f"⚠️ 伺服器 {guild_id} 尚未設定通知頻道")
+            await interaction.response.send_message(
+                "⚠️ **尚未設定通知頻道！**\n"
+                "請先使用 `/set_channel` 指令在要接收通知的頻道中設定通知頻道。",
+                ephemeral=True
+            )
+            return
 
         embed = discord.Embed(
             title="🤖 機器人指令說明",
