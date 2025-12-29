@@ -7,6 +7,7 @@ default values for all configuration options.
 
 import os
 import datetime
+from typing import List, Tuple
 from dotenv import load_dotenv
 
 # 載入環境變數
@@ -33,6 +34,53 @@ class Settings:
 
     # 資料檔案路徑
     DATA_FILE: str = os.getenv("DATA_FILE", "courses.json")
+
+    # 定期清除追蹤課程日期（格式：01-15,07-01,09-15）
+    _CLEANUP_DATES_STR: str = os.getenv("CLEANUP_DATES", "")
+
+    @staticmethod
+    def get_cleanup_dates() -> List[Tuple[int, int]]:
+        """
+        解析清除日期設定
+
+        Returns:
+            List of (month, day) tuples
+            例如：[(1, 15), (7, 1), (9, 15)]
+        """
+        if not Settings._CLEANUP_DATES_STR.strip():
+            return []
+
+        cleanup_dates = []
+        try:
+            for date_str in Settings._CLEANUP_DATES_STR.split(","):
+                date_str = date_str.strip()
+                if not date_str:
+                    continue
+
+                # 解析格式：MM-DD
+                parts = date_str.split("-")
+                if len(parts) != 2:
+                    print(f"⚠️ 警告：無效的清除日期格式 '{date_str}'（應為 MM-DD）")
+                    continue
+
+                month = int(parts[0])
+                day = int(parts[1])
+
+                # 驗證月份和日期
+                if not (1 <= month <= 12):
+                    print(f"⚠️ 警告：無效的月份 {month}（應為 1-12）")
+                    continue
+                if not (1 <= day <= 31):
+                    print(f"⚠️ 警告：無效的日期 {day}（應為 1-31）")
+                    continue
+
+                cleanup_dates.append((month, day))
+
+        except ValueError as e:
+            print(f"⚠️ 警告：解析清除日期失敗：{e}")
+            return []
+
+        return cleanup_dates
 
     @staticmethod
     def validate() -> bool:

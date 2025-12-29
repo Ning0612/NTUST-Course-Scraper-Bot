@@ -84,6 +84,7 @@ git push -u origin main
 | `POLLING_INTERVAL` | 選用 | `10` | 查詢間隔（秒） |
 | `NOTIFICATION_INTERVAL` | 選用 | `1` | 通知間隔（分鐘） |
 | `DATA_FILE` | 選用 | `/app/data/courses.json` | 資料檔案路徑 |
+| `CLEANUP_DATES` | 選用 | `01-15,07-01,09-15` | 定期清除追蹤課程日期（每年重複） |
 
 **5. 設定資料持久化（重要！）**
 
@@ -128,13 +129,6 @@ railway logs --tail
 - 確認 Bot 上線（綠燈）
 - 執行 `/help`
 - 執行 `/add CS1006301`
-
-#### Railway 成本估算
-
-- **Hobby Plan**（$5/月）：適合追蹤 < 50 門課程
-- **Pro Plan**（$20/月起）：適合追蹤 100+ 門課程
-
-詳細說明請參考 [RAILWAY-DEPLOY.md](./RAILWAY-DEPLOY.md)
 
 ---
 
@@ -209,6 +203,7 @@ python main.py
 - `POLLING_INTERVAL`：課程查詢間隔秒數（預設 `10`）
 - `NOTIFICATION_INTERVAL`：持續通知間隔分鐘數（預設 `1`）
 - `DATA_FILE`：資料檔案路徑（預設 `courses.json`）
+- `CLEANUP_DATES`：定期清除追蹤課程日期（格式：`MM-DD,MM-DD`，例如：`01-15,07-01,09-15`，留空則不啟用）
 
 ---
 
@@ -262,6 +257,10 @@ NTUST-Course-Scraper-Bot/
 **原因**：查詢頻率過高或 NTUST API 異常
 **解決**：增加 `POLLING_INTERVAL` 至 15-20 秒
 
+### 5. 定期清除追蹤課程
+**功能**：因應學期更新，可設定每年特定日期自動清除所有追蹤課程
+**設定**：在 `.env` 或 Railway Variables 中設定 `CLEANUP_DATES=01-15,07-01,09-15`
+**說明**：Bot 每 12 小時檢查一次，到達設定日期時會自動清除所有課程並通知使用者
 
 ---
 
@@ -291,7 +290,7 @@ NTUST-Course-Scraper-Bot/
 
 ---
 
-**版本**：v2.0
-**最後更新**：2025-12-25
+**版本**：v2.1
+**最後更新**：2025-12-29
 **部署目標**：Railway（推薦）
 **技術架構**：Python 3.11 + discord.py + NTUST Course API + Worker Pool

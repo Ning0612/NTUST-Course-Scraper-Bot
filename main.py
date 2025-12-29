@@ -8,6 +8,7 @@ to use a modular architecture with service layers.
 import discord
 from discord.ext import commands, tasks
 import asyncio
+import datetime
 
 # 配置與設定
 from config.settings import Settings, debug_print
@@ -61,6 +62,15 @@ async def on_ready():
         periodic_notify.start()
         debug_print(f"✅ 定期通知任務已啟動 (間隔: {Settings.NOTIFICATION_INTERVAL} 分鐘)")
 
+    # 啟動定期清除檢查任務
+    cleanup_dates = Settings.get_cleanup_dates()
+    if cleanup_dates and not check_cleanup_dates.is_running():
+        check_cleanup_dates.start()
+        debug_print(
+            f"✅ 定期清除檢查任務已啟動 "
+            f"(清除日期: {', '.join(f'{m:02d}-{d:02d}' for m, d in cleanup_dates)})"
+        )
+
 
 @tasks.loop(minutes=Settings.NOTIFICATION_INTERVAL)
 async def periodic_notify():
@@ -100,6 +110,62 @@ async def periodic_notify():
 
 @periodic_notify.before_loop
 async def before_periodic_notify():
+    """等待 Bot 完全啟動"""
+    await bot.wait_until_ready()
+
+
+@tasks.loop(hours=12)
+async def check_cleanup_dates():
+    """
+    定期檢查是否到達清除日期
+
+    每天執行一次，檢查當前日期是否在清除日期列表中。
+    如果是，則清除所有追蹤課程並儲存資料。
+    """
+    try:
+        cleanup_dates = Settings.get_cleanup_dates()
+        if not cleanup_dates:
+            return
+
+        now = datetime.datetime.now()
+        current_date = (now.month, now.day)
+
+        # 檢查是否為清除日期
+        if current_date in cleanup_dates:
+            debug_print(
+                f"📅 到達清除日期 {now.month:02d}-{now.day:02d}，開始清除所有追蹤課程..."
+            )
+
+            # 清除所有課程
+            cleared_count = await tracker.clear_all_courses()
+
+            # 儲存資料
+            data_manager.save_data(tracker.tracked_courses)
+
+            # 通知所有伺服器（如果有設定通知頻道）
+            for guild_id, channel_id in data_manager.guild_channels.items():
+                channel = bot.get_channel(channel_id)
+                if channel:
+                    try:
+                        message = (
+                            f"📢 **自動清除通知**\n\n"
+                            f"因應學期更新，所有追蹤課程已於 {now.strftime('%Y-%m-%d')} 自動清除。\n"
+                            f"共清除 {cleared_count} 門課程。\n\n"
+                            f"請使用 `/add` 指令重新追蹤本學期的課程。"
+                        )
+                        await channel.send(message)
+                        debug_print(f"✅ 已通知伺服器 {guild_id} 清除課程")
+                    except Exception as e:
+                        debug_print(f"❌ 通知伺服器 {guild_id} 失敗: {e}")
+
+            debug_print(f"✅ 清除任務完成，共清除 {cleared_count} 門課程")
+
+    except Exception as e:
+        debug_print(f"❌ 檢查清除日期任務錯誤: {e}")
+
+
+@check_cleanup_dates.before_loop
+async def before_check_cleanup_dates():
     """等待 Bot 完全啟動"""
     await bot.wait_until_ready()
 
