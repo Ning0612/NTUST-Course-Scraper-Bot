@@ -16,7 +16,7 @@ from config.settings import Settings, debug_print
 # 服務層
 from services.worker_pool import WorkerPool
 from services.data_manager import DataManager
-from services.tracker import CourseTracker
+from services.tracker import CourseTracker, find_writable_channel
 from services.api_client import init_api_client
 
 # Bot 指令
@@ -108,7 +108,28 @@ async def periodic_notify():
                         f"❌ 權限不足: 伺服器 {guild_id} 的頻道 "
                         f"#{channel.name} ({channel_id}) 缺少發送訊息權限"
                     )
+
+                    # 嘗試在其他有權限的頻道發送警告
+                    if guild_id not in tracker.warned_guilds:
+                        fallback_channel = find_writable_channel(channel.guild, bot.user.id)
+                        if fallback_channel and fallback_channel.id != channel.id:
+                            warning_msg = (
+                                f"⚠️ **權限不足警告**\n"
+                                f"Bot 目前在定期通知頻道 <#{channel.id}> 中缺少「發送訊息」權限，"
+                                f"導致無法發送定期課程提醒。\n"
+                                f"請管理員檢查頻道權限設定，或使用 `/set_channel` 重新設定頻道。"
+                            )
+                            try:
+                                await fallback_channel.send(warning_msg)
+                                tracker.warned_guilds.add(guild_id)
+                                debug_print(f"✅ 已在備用頻道 #{fallback_channel.name} 發送權限警告")
+                            except Exception as e:
+                                debug_print(f"❌ 在備用頻道發送警告失敗: {e}")
                     continue
+
+                # 權限正常，重置警告狀態
+                if guild_id in tracker.warned_guilds:
+                    tracker.warned_guilds.remove(guild_id)
 
                 for course in courses:
                     # 如果課程有空位且已發送通知，持續提醒

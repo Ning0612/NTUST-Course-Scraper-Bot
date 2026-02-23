@@ -12,6 +12,31 @@ from services.api_client import get_course_info
 from services.worker_pool import WorkerPool
 
 
+def find_writable_channel(guild, bot_user_id):
+    """
+    在伺服器中尋找第一個 Bot 具備發送訊息權限的文字頻道
+
+    Args:
+        guild: Discord Guild 實例
+        bot_user_id: Bot 的使用者 ID
+
+    Returns:
+        discord.TextChannel 或 None
+    """
+    # 優先嘗試系統頻道
+    if guild.system_channel:
+        me = guild.me or guild.get_member(bot_user_id)
+        if me and guild.system_channel.permissions_for(me).send_messages:
+            return guild.system_channel
+
+    # 否則尋找第一個可寫入的文字頻道
+    for channel in guild.text_channels:
+        me = guild.me or guild.get_member(bot_user_id)
+        if me and channel.permissions_for(me).send_messages:
+            return channel
+    return None
+
+
 class CourseTracker:
     """
     課程追蹤管理器（使用 Worker Pool）
@@ -41,6 +66,7 @@ class CourseTracker:
         self.worker_pool = worker_pool
         self.debug_print = debug_print
         self.tracked_courses: Dict[int, Dict[str, TrackedCourse]] = {}
+        self.warned_guilds = set()  # 記錄已發送權限警告的伺服器，避免重複洗板
         self.lock = asyncio.Lock()
         self.polling_task = None
 
@@ -270,7 +296,30 @@ class CourseTracker:
                 f"❌ 權限不足: 伺服器 {guild_id} 的頻道 "
                 f"#{channel.name} ({channel.id}) 缺少發送訊息權限，無法發送通知"
             )
+
+            # 嘗試在其他有權限的頻道發送警告
+            if guild_id not in self.warned_guilds:
+                guild = self.bot.get_guild(guild_id)
+                if guild:
+                    fallback_channel = find_writable_channel(guild, self.bot.user.id)
+                    if fallback_channel and fallback_channel.id != channel.id:
+                        warning_msg = (
+                            f"⚠️ **權限不足警告**\n"
+                            f"Bot 目前在設定的選課通知頻道 <#{channel.id}> 中缺少「發送訊息」權限，"
+                            f"導致無法正常發送課程名額通知。\n"
+                            f"請管理員檢查頻道權限設定，或使用 `/set_channel` 重新設定頻道。"
+                        )
+                        try:
+                            await fallback_channel.send(warning_msg)
+                            self.warned_guilds.add(guild_id)
+                            self.debug_print(f"✅ 已在備用頻道 #{fallback_channel.name} 發送權限警告")
+                        except Exception as e:
+                            self.debug_print(f"❌ 在備用頻道發送警告失敗: {e}")
             return
+
+        # 權限正常，重置警告狀態
+        if guild_id in self.warned_guilds:
+            self.warned_guilds.remove(guild_id)
 
         # 生成追蹤者提及字串
         followers = " ".join(f"<@{user_id}>" for user_id in course.followers)
