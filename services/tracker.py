@@ -186,26 +186,32 @@ class CourseTracker:
                 if course_code not in self.tracked_courses[guild_id]:
                     return
 
-                # 更新課程資料
-                course.name = course_info["course_name"]
-                course.teacher = course_info["teacher_name"]
-                course.lesson_time = course_info["lesson_time"]
-                course.classroom = course_info["classroom"]
-                course.remark = course_info["remark_text"]
-                course.enrolled_students = course_info["enrolled_students"]
+                # 更新課程資料 (加上欄位存在性檢查)
+                course.name = course_info.get("course_name", course.name)
+                course.teacher = course_info.get("teacher_name", course.teacher)
+                course.lesson_time = course_info.get("lesson_time", course.lesson_time)
+                course.classroom = course_info.get("classroom", course.classroom)
+                course.remark = course_info.get("remark_text", course.remark)
+                course.enrolled_students = course_info.get("enrolled_students", course.enrolled_students)
 
-                # 檢查名額並發送通知
+                # 檢查名額並標記通知狀態
+                should_notify = False
                 if course.has_available_seats():
                     if not course.notified:
-                        await self._send_notification(guild_id, course, course_info)
+                        # 標記為已通知以釋放鎖，避免重複發送
                         course.notified = True
-                        self.debug_print(
-                            f"📢 已發送 {course_code} 名額通知 "
-                            f"({course.enrolled_students}/{course.max_students})"
-                        )
+                        should_notify = True
                 else:
                     # 名額已滿，重置通知狀態
                     course.notified = False
+
+            # 在鎖外執行 Discord API 呼叫，避免阻塞其他任務
+            if should_notify:
+                await self._send_notification(guild_id, course, course_info)
+                self.debug_print(
+                    f"📢 已發送 {course_code} 名額通知 "
+                    f"({course.enrolled_students}/{course.max_students})"
+                )
 
         except Exception as e:
             self.debug_print(f"❌ 檢查課程 {course_code} 時發生錯誤：{e}")
@@ -251,6 +257,20 @@ class CourseTracker:
                     f"❌ 伺服器 {guild_id} 未設定通知頻道且無系統頻道，無法發送通知"
                 )
                 return
+
+        # 權限檢查 (安全取得自身成員對象)
+        me = channel.guild.me or channel.guild.get_member(self.bot.user.id)
+        if not me:
+            self.debug_print(f"❌ 找不到 Bot 在伺服器 {guild_id} 的成員對象")
+            return
+
+        permissions = channel.permissions_for(me)
+        if not permissions.send_messages:
+            self.debug_print(
+                f"❌ 權限不足: 伺服器 {guild_id} 的頻道 "
+                f"#{channel.name} ({channel.id}) 缺少發送訊息權限，無法發送通知"
+            )
+            return
 
         # 生成追蹤者提及字串
         followers = " ".join(f"<@{user_id}>" for user_id in course.followers)

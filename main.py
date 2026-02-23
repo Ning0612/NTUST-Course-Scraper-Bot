@@ -81,19 +81,38 @@ async def periodic_notify():
     持續提醒追蹤者。
     """
     try:
+        # 取得需要通知的課程列表，縮小 lock 範圍以避免阻塞 I/O
+        courses_by_guild = {}
         async with tracker.lock:
             for guild_id, courses in tracker.tracked_courses.items():
-                for course_code, course in courses.items():
+                courses_by_guild[guild_id] = list(courses.values())
+
+        for guild_id, courses in courses_by_guild.items():
+            try:
+                channel_id = data_manager.get_guild_channel(guild_id)
+                if not channel_id:
+                    continue
+
+                channel = bot.get_channel(channel_id)
+                if not channel:
+                    continue
+
+                # 權限檢查 (使用較安全的方式取得自身成員對象)
+                me = channel.guild.me or channel.guild.get_member(bot.user.id)
+                if not me:
+                    continue
+
+                permissions = channel.permissions_for(me)
+                if not permissions.send_messages:
+                    debug_print(
+                        f"❌ 權限不足: 伺服器 {guild_id} 的頻道 "
+                        f"#{channel.name} ({channel_id}) 缺少發送訊息權限"
+                    )
+                    continue
+
+                for course in courses:
                     # 如果課程有空位且已發送通知，持續提醒
                     if course.has_available_seats() and course.notified:
-                        channel_id = data_manager.get_guild_channel(guild_id)
-                        if not channel_id:
-                            continue
-
-                        channel = bot.get_channel(channel_id)
-                        if not channel:
-                            continue
-
                         followers = " ".join(f"<@{user_id}>" for user_id in course.followers)
                         message = (
                             f"{followers} 📢 **{course.code} {course.name}** 仍有名額！\n"
@@ -103,9 +122,13 @@ async def periodic_notify():
 
                         await channel.send(message)
                         debug_print(f"📢 定期提醒: {course.code} 仍有名額")
+            except discord.Forbidden:
+                debug_print(f"❌ 權限錯誤 (403): 無法在伺服器 {guild_id} 的頻道發送訊息")
+            except Exception as e:
+                debug_print(f"❌ 定期通知伺服器 {guild_id} 時發生錯誤: {e}")
 
     except Exception as e:
-        debug_print(f"❌ 定期通知任務錯誤: {e}")
+        debug_print(f"❌ 定期通知任務全局錯誤: {e}")
 
 
 @periodic_notify.before_loop
