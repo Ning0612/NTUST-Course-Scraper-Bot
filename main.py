@@ -90,11 +90,28 @@ async def periodic_notify():
         for guild_id, courses in courses_by_guild.items():
             try:
                 channel_id = data_manager.get_guild_channel(guild_id)
-                if not channel_id:
-                    continue
+                channel = bot.get_channel(channel_id) if channel_id else None
 
-                channel = bot.get_channel(channel_id)
                 if not channel:
+                    debug_print(f"⚠️ 伺服器 {guild_id} 未設定通知頻道或頻道不存在")
+                    
+                    # 嘗試在其他有權限的頻道發送「未設定頻道」警告
+                    if guild_id not in tracker.warned_guilds:
+                        guild = bot.get_guild(guild_id)
+                        if guild:
+                            fallback_channel = find_writable_channel(guild, bot.user.id)
+                            if fallback_channel:
+                                warning_msg = (
+                                    f"⚠️ **未設定通知頻道警告**\n"
+                                    f"本伺服器尚未設定（或已刪除）選課通知頻道，導致無法發送定期課程提醒。\n"
+                                    f"請管理員使用 `/set_channel` 指令在目標頻道中重新設定。"
+                                )
+                                try:
+                                    await fallback_channel.send(warning_msg)
+                                    tracker.warned_guilds.add(guild_id)
+                                    debug_print(f"✅ 已在備用頻道 #{fallback_channel.name} 發送設定警告")
+                                except Exception as e:
+                                    debug_print(f"❌ 在備用頻道發送警告失敗: {e}")
                     continue
 
                 # 權限檢查 (使用較安全的方式取得自身成員對象)

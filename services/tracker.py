@@ -282,6 +282,24 @@ class CourseTracker:
                 self.debug_print(
                     f"❌ 伺服器 {guild_id} 未設定通知頻道且無系統頻道，無法發送通知"
                 )
+                
+                # 嘗試在其他有權限的頻道發送「未設定頻道」警告
+                if guild_id not in self.warned_guilds:
+                    guild = self.bot.get_guild(guild_id)
+                    if guild:
+                        fallback_channel = find_writable_channel(guild, self.bot.user.id)
+                        if fallback_channel:
+                            warning_msg = (
+                                f"⚠️ **未設定通知頻道警告**\n"
+                                f"本伺服器尚未設定課程通知頻道，導致無法發送選課名額通知。\n"
+                                f"請管理員使用 `/set_channel` 指令在目標頻道中設定專屬通知頻道。"
+                            )
+                            try:
+                                await fallback_channel.send(warning_msg)
+                                self.warned_guilds.add(guild_id)
+                                self.debug_print(f"✅ 已在可用頻道 #{fallback_channel.name} 發送設定警告")
+                            except Exception as e:
+                                self.debug_print(f"❌ 在備用頻道發送警告失敗: {e}")
                 return
 
         # 權限檢查 (安全取得自身成員對象)
