@@ -51,34 +51,29 @@ class Settings:
             return []
 
         cleanup_dates = []
-        try:
-            for date_str in Settings._CLEANUP_DATES_STR.split(","):
-                date_str = date_str.strip()
-                if not date_str:
-                    continue
+        for date_str in Settings._CLEANUP_DATES_STR.split(","):
+            date_str = date_str.strip()
+            if not date_str:
+                continue
 
+            try:
                 # 解析格式：MM-DD
                 parts = date_str.split("-")
                 if len(parts) != 2:
-                    print(f"⚠️ 警告：無效的清除日期格式 '{date_str}'（應為 MM-DD）")
+                    print(f"⚠️ 警告：無效的清除日期格式 '{date_str}'（應為 MM-DD），已略過")
                     continue
 
                 month = int(parts[0])
                 day = int(parts[1])
 
-                # 驗證月份和日期
-                if not (1 <= month <= 12):
-                    print(f"⚠️ 警告：無效的月份 {month}（應為 1-12）")
-                    continue
-                if not (1 <= day <= 31):
-                    print(f"⚠️ 警告：無效的日期 {day}（應為 1-31）")
-                    continue
+                # 用 datetime.date 驗證日期合法性（使用非閏年，避免 02-29 誤判）
+                datetime.date(2001, month, day)
 
                 cleanup_dates.append((month, day))
 
-        except ValueError as e:
-            print(f"⚠️ 警告：解析清除日期失敗：{e}")
-            return []
+            except ValueError:
+                print(f"⚠️ 警告：無效的清除日期 '{date_str}'，已略過")
+                continue
 
         return cleanup_dates
 

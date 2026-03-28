@@ -393,19 +393,21 @@ class CourseTracker:
         """
         return self.tracked_courses.get(guild_id, {}).get(course_code)
 
-    async def clear_all_courses(self) -> int:
+    async def clear_all_courses(self) -> Dict[int, int]:
         """
         清除所有追蹤課程（所有伺服器）
 
         通常用於學期更新時自動清除過期課程。
 
         Returns:
-            清除的課程數量
+            Dict[guild_id, cleared_count]：各伺服器的清除課程數量
         """
         async with self.lock:
-            total_cleared = sum(
-                len(courses) for courses in self.tracked_courses.values()
-            )
+            guild_counts = {
+                guild_id: len(courses)
+                for guild_id, courses in self.tracked_courses.items()
+            }
             self.tracked_courses.clear()
-            self.debug_print(f"🗑️ 已清除所有追蹤課程（共 {total_cleared} 門）")
-            return total_cleared
+            total = sum(guild_counts.values())
+            self.debug_print(f"🗑️ 已清除所有追蹤課程（共 {total} 門）")
+            return guild_counts
