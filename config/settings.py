@@ -7,11 +7,18 @@ default values for all configuration options.
 
 import os
 import datetime
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from dotenv import load_dotenv
 
 # 載入環境變數
 load_dotenv()
+
+# 台北時區（Asia/Taipei，UTC+8，台灣不使用夏令時）
+try:
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    TAIPEI_TZ = _ZoneInfo("Asia/Taipei")
+except Exception:
+    TAIPEI_TZ = datetime.timezone(datetime.timedelta(hours=8))
 
 
 class Settings:
@@ -35,47 +42,92 @@ class Settings:
     # 資料檔案路徑
     DATA_FILE: str = os.getenv("DATA_FILE", "courses.json")
 
-    # 定期清除追蹤課程日期（格式：01-15,07-01,09-15）
-    _CLEANUP_DATES_STR: str = os.getenv("CLEANUP_DATES", "")
+    # 選課期間設定（格式：MM-DD~MM-DD，多組用逗號分隔）
+    # 例如：03-17~03-28,09-15~10-05（上下學期各一組）
+    TRACKING_PERIODS_STR: str = os.getenv("TRACKING_PERIODS", "")
 
     @staticmethod
-    def get_cleanup_dates() -> List[Tuple[int, int]]:
+    def _parse_md(s: str) -> Optional[Tuple[int, int]]:
         """
-        解析清除日期設定
+        解析 MM-DD 字串為 (month, day)，失敗回傳 None
+
+        Args:
+            s: MM-DD 格式的日期字串
 
         Returns:
-            List of (month, day) tuples
-            例如：[(1, 15), (7, 1), (9, 15)]
+            (month, day) tuple 或 None
         """
-        if not Settings._CLEANUP_DATES_STR.strip():
+        try:
+            parts = s.strip().split("-")
+            if len(parts) != 2:
+                return None
+            m, d = int(parts[0]), int(parts[1])
+            datetime.date(2001, m, d)  # 驗證合法性（非閏年）
+            return (m, d)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def get_tracking_periods() -> List[Tuple[Tuple[int, int], Tuple[int, int]]]:
+        """
+        解析 TRACKING_PERIODS，回傳所有選課期間 pair 清單
+
+        Returns:
+            [(start_md, end_md), ...] 例如 [((3,17),(3,28)), ((9,15),(10,5))]
+        """
+        raw = Settings.TRACKING_PERIODS_STR.strip()
+        if not raw:
             return []
-
-        cleanup_dates = []
-        for date_str in Settings._CLEANUP_DATES_STR.split(","):
-            date_str = date_str.strip()
-            if not date_str:
+        result = []
+        for pair_str in raw.split(","):
+            pair_str = pair_str.strip()
+            if not pair_str:
                 continue
-
-            try:
-                # 解析格式：MM-DD
-                parts = date_str.split("-")
-                if len(parts) != 2:
-                    print(f"⚠️ 警告：無效的清除日期格式 '{date_str}'（應為 MM-DD），已略過")
-                    continue
-
-                month = int(parts[0])
-                day = int(parts[1])
-
-                # 用 datetime.date 驗證日期合法性（使用非閏年，避免 02-29 誤判）
-                datetime.date(2001, month, day)
-
-                cleanup_dates.append((month, day))
-
-            except ValueError:
-                print(f"⚠️ 警告：無效的清除日期 '{date_str}'，已略過")
+            parts = pair_str.split("~")
+            if len(parts) != 2:
+                print(f"⚠️ 無效的追蹤期間格式 '{pair_str}'（應為 MM-DD~MM-DD），已略過")
                 continue
+            start = Settings._parse_md(parts[0])
+            end = Settings._parse_md(parts[1])
+            if start is None or end is None:
+                print(f"⚠️ 無效的日期 '{pair_str}'，已略過")
+                continue
+            result.append((start, end))
+        return result
 
-        return cleanup_dates
+    @staticmethod
+    def get_active_period(
+        today: datetime.date
+    ) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
+        """
+        回傳今天所在的選課期間，若無則回傳 None
+
+        同年區間（start <= end）：start <= today <= end
+        跨年區間（start > end）：today >= start(今年) 或 today <= end(今年)
+
+        Args:
+            today: 要檢查的日期
+
+        Returns:
+            (start_md, end_md) tuple 或 None
+        """
+        year = today.year
+        for (sm, sd), (em, ed) in Settings.get_tracking_periods():
+            s = datetime.date(year, sm, sd)
+            e = datetime.date(year, em, ed)
+            if s <= e:
+                if s <= today <= e:
+                    return ((sm, sd), (em, ed))
+            else:
+                # 跨年區間：active 若 today >= s(今年) 或 today <= e(今年)
+                if today >= s or today <= e:
+                    return ((sm, sd), (em, ed))
+        return None
+
+    @staticmethod
+    def is_tracking_enabled() -> bool:
+        """回傳是否已設定至少一組選課期間"""
+        return bool(Settings.get_tracking_periods())
 
     @staticmethod
     def validate() -> bool:

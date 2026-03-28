@@ -5,11 +5,13 @@ This module contains all Discord slash commands registered with the bot,
 refactored to use the service layer (CourseTracker, DataManager, etc.).
 """
 
+import datetime
+
 import discord
 from discord import app_commands
 from models.course import TrackedCourse
 from services.api_client import get_course_info
-from config.settings import debug_print
+from config.settings import Settings, TAIPEI_TZ as _TAIPEI_TZ, debug_print
 
 
 def setup_commands(bot, tracker, data_manager):
@@ -105,10 +107,19 @@ def setup_commands(bot, tracker, data_manager):
             f"✅ 成功創建追蹤：{course_code} "
             f"({course.enrolled_students}/{course.max_students})"
         )
+
+        # 若已設定選課期間但目前非 active，附加提示訊息
+        hint = ""
+        if Settings.is_tracking_enabled():
+            today = datetime.datetime.now(_TAIPEI_TZ).date()
+            if not Settings.get_active_period(today):
+                hint = "\n\n⏳ **注意：目前非選課期間**，課程將於選課開始後自動開始追蹤，選課結束後追蹤清單將自動清除。"
+
         await interaction.followup.send(
             f"✅ 已成功找到並開始追蹤課程：\n"
             f"**`{course.code} - {course.name} "
             f"({course.enrolled_students}/{course.max_students})`**"
+            f"{hint}"
         )
 
     @bot.tree.command(name="del", description="取消追蹤課程")

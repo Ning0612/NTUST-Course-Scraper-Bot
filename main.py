@@ -9,15 +9,9 @@ import discord
 from discord.ext import commands, tasks
 import asyncio
 import datetime
-try:
-    from zoneinfo import ZoneInfo as _ZoneInfo
-    _TAIPEI_TZ = _ZoneInfo("Asia/Taipei")
-except Exception:
-    # Windows 無 tzdata 時的 fallback（台灣不使用夏令時，UTC+8 永遠正確）
-    _TAIPEI_TZ = datetime.timezone(datetime.timedelta(hours=8))
 
 # 配置與設定
-from config.settings import Settings, debug_print
+from config.settings import Settings, TAIPEI_TZ as _TAIPEI_TZ, debug_print
 
 # 服務層
 from services.worker_pool import WorkerPool
@@ -29,7 +23,17 @@ from services.api_client import init_api_client
 from bot.commands import setup_commands
 
 
-_last_cleanup_date: datetime.date | None = None
+# 記錄上次已知的 active period key，用於偵測轉場（避免重複觸發）
+# 格式："MM-DD~MM-DD" 或 "" (不在任何 active period)
+_last_active_period_key: str = ""
+
+
+def _period_key(period) -> str:
+    """將 period tuple 轉為字串 key，方便跨天比對"""
+    if period is None:
+        return ""
+    (sm, sd), (em, ed) = period
+    return f"{sm:02d}-{sd:02d}~{em:02d}-{ed:02d}"
 
 # Discord Bot 初始化
 intents = discord.Intents.default()
@@ -45,6 +49,7 @@ tracker = CourseTracker(bot, data_manager.guild_channels, worker_pool, debug_pri
 @bot.event
 async def on_ready():
     """Bot 啟動事件"""
+    global _last_active_period_key
     debug_print(f"✅ Bot 已啟動：{bot.user}")
 
     # 初始化 API Client
@@ -62,22 +67,36 @@ async def on_ready():
     # 恢復追蹤狀態
     await data_manager.restore_tracking(tracker)
 
-    # 啟動輪詢任務
-    await tracker.start_polling(interval=Settings.POLLING_INTERVAL)
+    # 判斷目前選課期間狀態並初始化 _last_active_period_key
+    today = datetime.datetime.now(_TAIPEI_TZ).date()
+    active = Settings.get_active_period(today)
+    _last_active_period_key = _period_key(active)
+
+    if not Settings.is_tracking_enabled():
+        # 未設定 TRACKING_PERIODS：維持舊行為（永遠輪詢）
+        await tracker.start_polling(interval=Settings.POLLING_INTERVAL)
+        debug_print("⚠️ 未設定 TRACKING_PERIODS，維持永遠輪詢模式")
+    elif active:
+        # 目前為選課期間，啟動輪詢
+        await tracker.start_polling(interval=Settings.POLLING_INTERVAL)
+        debug_print(f"🟢 目前為選課期間 {_last_active_period_key}，啟動課程輪詢")
+    else:
+        debug_print("⏸️ 目前非選課期間，不啟動課程輪詢")
 
     # 啟動定期通知任務
     if not periodic_notify.is_running():
         periodic_notify.start()
         debug_print(f"✅ 定期通知任務已啟動 (間隔: {Settings.NOTIFICATION_INTERVAL} 分鐘)")
 
-    # 啟動定期清除檢查任務
-    cleanup_dates = Settings.get_cleanup_dates()
-    if cleanup_dates and not check_cleanup_dates.is_running():
-        check_cleanup_dates.start()
-        debug_print(
-            f"✅ 定期清除檢查任務已啟動 "
-            f"(清除日期: {', '.join(f'{m:02d}-{d:02d}' for m, d in cleanup_dates)})"
+    # 啟動選課期間檢查任務
+    if Settings.is_tracking_enabled() and not check_date_range.is_running():
+        check_date_range.start()
+        periods = Settings.get_tracking_periods()
+        periods_str = ", ".join(
+            f"{sm:02d}-{sd:02d}~{em:02d}-{ed:02d}"
+            for (sm, sd), (em, ed) in periods
         )
+        debug_print(f"✅ 選課期間檢查任務已啟動 (期間: {periods_str})")
 
 
 @tasks.loop(minutes=Settings.NOTIFICATION_INTERVAL)
@@ -86,8 +105,14 @@ async def periodic_notify():
     定期通知任務
 
     每隔一段時間檢查所有有空位且已通知的課程，
-    持續提醒追蹤者。
+    持續提醒追蹤者。僅在選課期間（或未設定期間時）執行。
     """
+    # 若已設定選課期間但目前非 active，靜默跳過
+    if Settings.is_tracking_enabled():
+        today = datetime.datetime.now(_TAIPEI_TZ).date()
+        if not Settings.get_active_period(today):
+            return
+
     try:
         # 取得需要通知的課程列表，縮小 lock 範圍以避免阻塞 I/O
         courses_by_guild = {}
@@ -183,70 +208,77 @@ async def before_periodic_notify():
     await bot.wait_until_ready()
 
 
-@tasks.loop(hours=12)
-async def check_cleanup_dates():
+@tasks.loop(minutes=10)
+async def check_date_range():
     """
-    定期檢查是否到達清除日期
+    定期檢查選課期間狀態並執行轉場動作
 
-    每 12 小時執行一次，使用台灣時間（Asia/Taipei）判斷日期，
-    並記錄當日是否已執行過，避免同一天重複清除。
+    每 10 分鐘執行一次，偵測是否進入或離開選課期間：
+    - 非 active → active：啟動課程輪詢
+    - active → 非 active：停止輪詢，清除追蹤課程，發送通知
     """
-    global _last_cleanup_date
+    global _last_active_period_key
     try:
-        cleanup_dates = Settings.get_cleanup_dates()
-        if not cleanup_dates:
+        today = datetime.datetime.now(_TAIPEI_TZ).date()
+        active = Settings.get_active_period(today)
+        current_key = _period_key(active)
+
+        # 無變化，不做任何事
+        if current_key == _last_active_period_key:
             return
 
-        now = datetime.datetime.now(_TAIPEI_TZ)
-        today = now.date()
-        current_date = (today.month, today.day)
+        was_active = bool(_last_active_period_key)
+        now_active = bool(current_key)
 
-        # 防重複：當日已執行過則跳過
-        if today == _last_cleanup_date:
-            return
+        if now_active and not was_active:
+            # 非 active → active：啟動輪詢（先執行再更新 state，失敗可重試）
+            if tracker.polling_task is None:
+                await tracker.start_polling(interval=Settings.POLLING_INTERVAL)
+            _last_active_period_key = current_key
+            debug_print(f"🟢 進入選課期間 {current_key}，啟動課程輪詢")
 
-        # 檢查是否為清除日期
-        if current_date in cleanup_dates:
-            debug_print(
-                f"📅 到達清除日期 {today.month:02d}-{today.day:02d}，開始清除所有追蹤課程..."
-            )
+        elif now_active and was_active:
+            # active → active：period 切換（相接期間），同步 key 即可
+            _last_active_period_key = current_key
+            debug_print(f"🔄 選課期間切換至 {current_key}")
 
-            # 清除所有課程，取得各伺服器的清除數量
+        elif not now_active and was_active:
+            # active → 非 active：停止輪詢 + 清除課程（成功後才更新 state）
+            await tracker.stop_polling()
+
             guild_counts = await tracker.clear_all_courses()
             total_cleared = sum(guild_counts.values())
 
-            # 儲存資料（成功後才標記當日已執行，確保 save 失敗時下次可重試）
             if data_manager.save(tracker.tracked_courses):
-                _last_cleanup_date = today
+                _last_active_period_key = ""  # 存檔成功才更新 state，失敗則下次重試
+                debug_print(f"✅ 選課期間結束，已清除 {total_cleared} 門課程")
             else:
-                debug_print("❌ 清除後存檔失敗，本次清除結果未持久化，下次輪詢將重試")
+                debug_print("❌ 清除後存檔失敗，下次將重試")
 
-            # 有課程被清除才發通知，避免重啟後重複發「清除 0 門」的通知
+            # 有課程被清除才發通知
             if total_cleared > 0:
+                now_str = datetime.datetime.now(_TAIPEI_TZ).strftime('%Y-%m-%d')
                 for guild_id, channel_id in data_manager.guild_channels.items():
                     channel = bot.get_channel(channel_id)
                     if channel:
                         try:
                             guild_count = guild_counts.get(guild_id, 0)
-                            message = (
+                            await channel.send(
                                 f"📢 **自動清除通知**\n\n"
-                                f"因應學期更新，本伺服器的追蹤課程已於 {now.strftime('%Y-%m-%d')} 自動清除。\n"
+                                f"選課期間已結束，本伺服器的追蹤課程已於 {now_str} 自動清除。\n"
                                 f"共清除 {guild_count} 門課程。\n\n"
-                                f"請使用 `/add` 指令重新追蹤本學期的課程。"
+                                f"請使用 `/add` 指令在下次選課開始時重新追蹤課程。"
                             )
-                            await channel.send(message)
-                            debug_print(f"✅ 已通知伺服器 {guild_id} 清除課程")
+                            debug_print(f"✅ 已通知伺服器 {guild_id} 選課期間結束")
                         except Exception as e:
                             debug_print(f"❌ 通知伺服器 {guild_id} 失敗: {e}")
 
-            debug_print(f"✅ 清除任務完成，共清除 {total_cleared} 門課程")
-
     except Exception as e:
-        debug_print(f"❌ 檢查清除日期任務錯誤: {e}")
+        debug_print(f"❌ 選課期間檢查任務錯誤: {e}")
 
 
-@check_cleanup_dates.before_loop
-async def before_check_cleanup_dates():
+@check_date_range.before_loop
+async def before_check_date_range():
     """等待 Bot 完全啟動"""
     await bot.wait_until_ready()
 
