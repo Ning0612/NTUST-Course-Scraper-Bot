@@ -7,7 +7,7 @@
 - 🚀 **即時監控**：每 10 秒自動查詢課程剩餘名額
 - 📢 **智慧通知**：有空位時自動在 Discord 頻道中標記追蹤者
 - 🔄 **並行查詢**：Worker Pool 架構，同時追蹤多門課程
-- 💾 **資料持久化**：支援 Railway Volumes，重啟不遺失追蹤資料
+- 💾 **資料持久化**：追蹤資料儲存至本機檔案，重啟後自動恢復
 - 🌐 **多伺服器**：支援多個 Discord 伺服器同時使用
 - ⚡ **輕量高效**：記憶體使用 < 300MB（追蹤 50 門課程）
 
@@ -19,7 +19,6 @@
 - **並行處理**：Worker Pool（5 workers）
 - **記憶體使用**：< 300MB
 - **查詢速度**：1-2 秒/課程
-- **Docker Image**：300MB（python:3.11-slim）
 
 ### 相較 v1.0 的改進
 
@@ -27,136 +26,16 @@
 |------|-------------------|--------------------------|------|
 | 記憶體使用 | 5-15 GB | < 300 MB | -95% |
 | 查詢速度 | 10-15 秒 | 1-2 秒 | -85% |
-| Docker Image | 1.5 GB | 300 MB | -80% |
 | 啟動時間 | 20-30 秒 | 5-10 秒 | -70% |
 
 ## 📋 系統需求
 
 - **Python**：3.11+
 - **Discord Bot Token**：從 [Discord Developer Portal](https://discord.com/developers/applications) 取得
-- **部署平台**（擇一）：
-  - Railway（推薦）
-  - Docker
-  - 本地 Python 環境
 
 ## 🚀 部署方式
 
-### 方式 1：Railway 部署（推薦，5 分鐘完成）
-
-#### 前置準備
-- GitHub 帳號
-- Railway 帳號（https://railway.app - 免費註冊）
-- Discord Bot Token
-
-#### 部署步驟
-
-**1. Fork 或推送專案到 GitHub**
-```bash
-# 如果是本地專案，先推送到 GitHub
-git init
-git add .
-git commit -m "Initial commit"
-git remote add origin https://github.com/你的帳號/NTUST-Course-Scraper-Bot.git
-git push -u origin main
-```
-
-**2. 在 Railway 建立專案**
-1. 前往 https://railway.app
-2. 點擊 **New Project**
-3. 選擇 **Deploy from GitHub repo**
-4. 授權 Railway 存取 GitHub
-5. 選擇 `NTUST-Course-Scraper-Bot` repository
-
-**3. Railway 會自動**
-- 偵測 `Dockerfile` 和 `railway.json`
-- 開始建置（約 2-3 分鐘）
-- 部署完成後等待設定環境變數
-
-**4. 設定環境變數**
-
-在 Railway Dashboard → **Variables** → **Add Variable**：
-
-| 變數名稱 | 必要性 | 範例值 | 說明 |
-|---------|--------|--------|------|
-| `TOKEN` | ✅ 必要 | `MTI1Mz...` | Discord Bot Token |
-| `DEBUG` | 選用 | `False` | 除錯模式（生產環境建議 False） |
-| `WORKER_POOL_SIZE` | 選用 | `5` | Worker Pool 大小 |
-| `POLLING_INTERVAL` | 選用 | `10` | 查詢間隔（秒） |
-| `NOTIFICATION_INTERVAL` | 選用 | `1` | 通知間隔（分鐘） |
-| `DATA_FILE` | 選用 | `/app/data/courses.json` | 資料檔案路徑 |
-| `CLEANUP_DATES` | 選用 | `01-15,07-01,09-15` | 定期清除追蹤課程日期（每年重複） |
-
-**5. 設定資料持久化（重要！）**
-
-Railway CLI 方式：
-```bash
-# 安裝 Railway CLI
-npm install -g @railway/cli
-
-# 登入
-railway login
-
-# 連結專案
-railway link
-
-# 建立 Volume
-railway volume create course-data --mount /app/data
-
-# 確認環境變數
-railway variables set DATA_FILE="/app/data/courses.json"
-```
-
-Railway Dashboard 方式：
-1. Project Settings → **Volumes**
-2. 點擊 **New Volume**
-3. 設定：
-   - **Name**: `course-data`
-   - **Mount Path**: `/app/data`
-4. 確認 Variables 中 `DATA_FILE=/app/data/courses.json`
-
-**6. 驗證部署**
-```bash
-# 查看日誌
-railway logs --tail
-
-# 預期輸出：
-# ✅ Bot 已啟動：YourBotName
-# ✅ Course API Client 已初始化
-# ✅ Worker Pool 已啟動 (大小: 5)
-```
-
-在 Discord 中測試：
-- 確認 Bot 上線（綠燈）
-- 執行 `/help`
-- 執行 `/add CS1006301`
-
----
-
-### 方式 2：Docker 本地部署
-
-```bash
-# 1. 複製專案
-git clone <repository_url>
-cd NTUST-Course-Scraper-Bot
-
-# 2. 建立 .env 檔案
-cp .env.example .env
-# 編輯 .env，填入 Discord Bot Token
-
-# 3. 建置 Docker Image
-docker build -t ntust-course-bot .
-
-# 4. 執行容器
-docker run -d \
-  --name ntust-bot \
-  --env-file .env \
-  -v $(pwd)/courses.json:/app/courses.json \
-  ntust-course-bot
-```
-
----
-
-### 方式 3：本地 Python 環境
+### 方式 1：本地 Python 環境
 
 ```bash
 # 1. 複製專案
@@ -232,8 +111,6 @@ NTUST-Course-Scraper-Bot/
 ├── ntust_api/              # NTUST Course API 模組
 ├── courses.json            # 追蹤課程資料（自動生成）
 ├── requirements.txt        # Python 依賴
-├── Dockerfile              # Docker 建置配置
-├── railway.json            # Railway 部署配置
 └── .env.example            # 環境變數範本
 ```
 
@@ -243,11 +120,11 @@ NTUST-Course-Scraper-Bot/
 
 ### 1. Bot 啟動後立即停止
 **原因**：缺少 `TOKEN` 環境變數
-**解決**：確認 Railway Variables 或 `.env` 中已設定 Discord Bot Token
+**解決**：確認 `.env` 中已設定 Discord Bot Token
 
 ### 2. 課程資料重啟後遺失
-**原因**：未配置持久化儲存
-**解決**：Railway 需設定 Volume，Docker 需掛載 volume
+**原因**：資料檔案路徑不在持久化儲存上
+**解決**：確認 `DATA_FILE` 指向可寫入且重啟後仍存在的路徑
 
 ### 3. 記憶體使用過高
 **原因**：Worker Pool 過大
@@ -259,7 +136,7 @@ NTUST-Course-Scraper-Bot/
 
 ### 5. 定期清除追蹤課程
 **功能**：因應學期更新，可設定每年特定日期自動清除所有追蹤課程
-**設定**：在 `.env` 或 Railway Variables 中設定 `CLEANUP_DATES=01-15,07-01,09-15`
+**設定**：在 `.env` 中設定 `CLEANUP_DATES=01-15,07-01,09-15`
 **說明**：Bot 每 12 小時檢查一次，到達設定日期時會自動清除所有課程並通知使用者
 
 ---
@@ -268,7 +145,7 @@ NTUST-Course-Scraper-Bot/
 
 - ⚠️ **永不提交** `.env` 檔案到 Git（已加入 `.gitignore`）
 - ⚠️ 如果 Discord Bot Token 洩漏，立即在 Discord Developer Portal 重設
-- ✅ Railway 部署時使用 Dashboard Variables（加密儲存）
+- ✅ 部署時使用環境變數管理敏感資訊（勿寫入程式碼）
 - ✅ 定期更換 Discord Bot Token
 
 ---
@@ -291,6 +168,6 @@ NTUST-Course-Scraper-Bot/
 ---
 
 **版本**：v2.1
-**最後更新**：2025-12-29
-**部署目標**：Railway（推薦）
+**最後更新**：2026-03-28
+**部署目標**：GCP
 **技術架構**：Python 3.11 + discord.py + NTUST Course API + Worker Pool
