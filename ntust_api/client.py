@@ -1,5 +1,8 @@
 import requests
+import urllib3
 from urllib.parse import urlparse
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 
@@ -7,6 +10,8 @@ class NtustClient:
     def __init__(self, user_agent=DEFAULT_USER_AGENT):
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": user_agent})
+        # NTUST's certificate is missing Subject Key Identifier, skip SSL verification
+        self.session.verify = False
 
     def get(self, url, **kwargs):
         resp = self.session.get(url, **kwargs)
