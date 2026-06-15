@@ -323,10 +323,10 @@ def setup_commands(bot, tracker, data_manager):
         )
         embed.add_field(
             name="GitHub 原始碼",
-            value="[NTUST Course Scraper Bot](https://github.com/Ning0612/NTUST-Course-Scraper-Bot)",
+            value="[NTUST Course Tracker Bot](https://github.com/Ning0612/ntust-course-tracker-bot)",
             inline=False
         )
-        embed.set_footer(text="NTUST Course Scraper Bot v2.0 (Phase 2)")
+        embed.set_footer(text="NTUST Course Tracker Bot v2.0 (Phase 2)")
 
         debug_print(f"📤 發送說明訊息")
         await interaction.response.send_message(embed=embed, ephemeral=True)

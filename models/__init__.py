@@ -1,1 +1,1 @@
-"""Data models for NTUST Course Scraper Bot."""
+"""Data models for NTUST Course Tracker Bot."""

@@ -1,5 +1,5 @@
 """
-Configuration settings for NTUST Course Scraper Bot.
+Configuration settings for NTUST Course Tracker Bot.
 
 This module centralizes environment variable access and provides
 default values for all configuration options.

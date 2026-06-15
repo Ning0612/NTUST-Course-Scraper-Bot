@@ -1,1 +1,1 @@
-"""Service layer for NTUST Course Scraper Bot."""
+"""Service layer for NTUST Course Tracker Bot."""

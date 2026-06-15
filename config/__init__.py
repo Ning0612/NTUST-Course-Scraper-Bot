@@ -1,1 +1,1 @@
-"""Configuration module for NTUST Course Scraper Bot."""
+"""Configuration module for NTUST Course Tracker Bot."""

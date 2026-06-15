@@ -1,4 +1,4 @@
-# NTUST Course Scraper Bot（台科大課程追蹤機器人）
+# NTUST Course Tracker Bot（台科大課程追蹤機器人）
 
 一個高效能的 Discord 機器人，用於監控國立台灣科技大學選課系統，當課程出現空位時自動通知使用者。
 
@@ -40,8 +40,8 @@
 
 ```bash
 # 1. 複製專案
-git clone <repository_url>
-cd NTUST-Course-Scraper-Bot
+git clone https://github.com/Ning0612/ntust-course-tracker-bot
+cd ntust-course-tracker-bot
 
 # 2. 建立虛擬環境
 python -m venv .venv
@@ -90,7 +90,7 @@ python main.py
 ## 📁 專案結構
 
 ```
-NTUST-Course-Scraper-Bot/
+ntust-course-tracker-bot/
 ├── main.py                 # 程式入口
 ├── config/
 │   ├── __init__.py

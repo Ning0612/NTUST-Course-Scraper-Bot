@@ -1,5 +1,5 @@
 """
-NTUST Course Scraper Bot - Phase 2 Refactored Version
+NTUST Course Tracker Bot - Phase 2 Refactored Version
 
 Main entry point for the Discord bot. This file has been refactored
 to use a modular architecture with service layers.
