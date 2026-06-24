@@ -49,34 +49,29 @@ async def get_course_info(course_code: str) -> Optional[Dict[str, Any]]:
     if _api_client is None:
         raise RuntimeError("API Client not initialized. Call init_api_client() first.")
 
-    try:
-        # API 呼叫是同步的，需要在 executor 中執行避免阻塞事件循環
-        loop = asyncio.get_event_loop()
-        results = await loop.run_in_executor(
-            None,
-            _api_client.search_courses,
-            None,  # semester (自動取得最新)
-            course_code
-        )
+    # API 呼叫是同步的，需要在 executor 中執行避免阻塞事件循環
+    loop = asyncio.get_event_loop()
+    results = await loop.run_in_executor(
+        None,
+        _api_client.search_courses,
+        None,  # semester (自動取得最新)
+        course_code
+    )
 
-        if not results:
-            return None
-
-        course = results[0]
-        return {
-            "course_code": course.get("CourseNo", ""),
-            "course_name": course.get("CourseName", ""),
-            "teacher_name": course.get("CourseTeacher", ""),
-            "lesson_time": course.get("Node", ""),
-            "classroom": course.get("ClassRoomNo", ""),
-            "remark_text": course.get("Contents", ""),
-            "enrolled_students": int(course.get("ChooseStudent", 0)),
-            "max_students": int(course.get("Restrict2", 0))
-        }
-    except Exception as e:
-        # 錯誤處理由呼叫者決定
-        print(f"❌ API 查詢失敗 {course_code}: {e}")
+    if not results:
         return None
+
+    course = results[0]
+    return {
+        "course_code": course.get("CourseNo", ""),
+        "course_name": course.get("CourseName", ""),
+        "teacher_name": course.get("CourseTeacher", ""),
+        "lesson_time": course.get("Node", ""),
+        "classroom": course.get("ClassRoomNo", ""),
+        "remark_text": course.get("Contents", ""),
+        "enrolled_students": int(course.get("ChooseStudent", 0)),
+        "max_students": int(course.get("Restrict2", 0))
+    }
 
 
 async def search_courses(

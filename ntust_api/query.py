@@ -18,14 +18,15 @@ class CourseQueryClient(NtustClient):
         return []
 
     def get_latest_semester(self):
-        """Returns the latest active semester code."""
+        """Returns the latest regular semester code (ending in 1 or 2, skipping summer H sessions)."""
         semesters = self.get_semesters()
         for sem in semesters:
-            if sem.get('LoginEnable'):
-                return sem.get('Semester')
+            code = sem.get('Semester', '')
+            if code and code[-1] in ('1', '2'):
+                return code
         if semesters:
             return semesters[0].get('Semester')
-        return "1141" # Fallback
+        return "1151" # Fallback
 
     def search_courses(self, semester=None, course_no=None, course_name=None, teacher=None, language="zh", old_course=False):
         """
@@ -50,13 +51,9 @@ class CourseQueryClient(NtustClient):
             "onlyNode": 0,
             "language": language
         }
-        try:
-            resp = self.post(url, json=payload, timeout=20)
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            print(f"Error searching courses: {e}")
-            return []
+        resp = self.post(url, json=payload, timeout=20)
+        resp.raise_for_status()
+        return resp.json()
 
     def search_archived_info(self, course_no="", course_name="", dept=""):
         """
