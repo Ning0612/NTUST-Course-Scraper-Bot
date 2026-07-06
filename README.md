@@ -168,7 +168,7 @@ ntust-course-tracker-bot/
 
 ## 📄 授權
 
-本專案僅供學術研究與個人使用，請勿用於商業用途。
+This cleaned public version is released under the MIT License. The source code is intended for reuse, modification, and study under the terms of [LICENSE](LICENSE).
 
 ---
 
