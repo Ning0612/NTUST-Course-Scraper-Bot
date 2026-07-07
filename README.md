@@ -155,6 +155,28 @@ ntust-course-tracker-bot/
 
 ---
 
+## ⚖️ 免責聲明與負責任使用
+
+This is an independent student project and is not affiliated with, endorsed by,
+or operated by National Taiwan University of Science and Technology (NTUST).
+
+The bot queries public course availability information for personal course
+tracking. Users are responsible for complying with NTUST system policies and
+for avoiding unnecessary load on university services.
+
+Responsible-use guidelines:
+
+- Track only courses you genuinely need.
+- Avoid running multiple bot instances for the same user or server.
+- Use conservative polling settings. If queries fail, increase
+  `POLLING_INTERVAL` and reduce `WORKER_POOL_SIZE`.
+- Do not use the project for bulk scraping, data resale, or automated actions
+  against university systems.
+- Stop the bot if NTUST changes access rules, rate limits, or asks clients to
+  reduce traffic.
+
+---
+
 ## 📊 效能監控
 
 追蹤 50 門課程的預期表現：
